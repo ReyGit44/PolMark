@@ -1,0 +1,17 @@
+# Polymarket Parity Arbitrage Bot Dependencies
+
+# HTTP client
+aiohttp>=3.9.0
+
+# WebSocket client
+websockets>=12.0
+
+# Ethereum signing
+eth-account>=0.11.0
+eth-typing>=4.0.0
+
+# Sorted data structures for orderbook
+sortedcontainers>=2.4.0
+
+# Environment variable loading
+python-dotenv>=1.0.0

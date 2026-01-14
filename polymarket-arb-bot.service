@@ -1,0 +1,32 @@
+[Unit]
+Description=Polymarket Parity Arbitrage Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=polymarket
+Group=polymarket
+WorkingDirectory=/opt/polymarket-arb-bot
+EnvironmentFile=/opt/polymarket-arb-bot/.env
+ExecStart=/opt/polymarket-arb-bot/venv/bin/python -m polymarket_arb_bot
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/polymarket-arb-bot
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=50%
+
+# Logging
+StandardOutput=append:/var/log/polymarket-arb-bot/stdout.log
+StandardError=append:/var/log/polymarket-arb-bot/stderr.log
+
+[Install]
+WantedBy=multi-user.target
