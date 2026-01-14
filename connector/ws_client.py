@@ -69,7 +69,7 @@ class PolymarketWebSocketClient:
     def __init__(
         self,
         auth_manager: Optional[AuthManager] = None,
-        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/",
+        ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market",
         reconnect_delay: int = 5,
         ping_interval: int = 30,
     ):
@@ -180,8 +180,18 @@ class PolymarketWebSocketClient:
                 if self._on_error:
                     self._on_error(e)
     
-    async def _handle_message(self, data: dict[str, Any]) -> None:
+    async def _handle_message(self, data: Any) -> None:
         """Route message to appropriate handler."""
+        # Handle list responses (initial subscription confirmation)
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    await self._handle_message(item)
+            return
+        
+        if not isinstance(data, dict):
+            return
+        
         event_type = data.get("event_type", "")
         
         if event_type == "book":

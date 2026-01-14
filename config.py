@@ -59,7 +59,7 @@ class RiskConfig:
 class ConnectionConfig:
     """API connection configuration."""
     clob_rest_url: str = "https://clob.polymarket.com"
-    clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/"
+    clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     gamma_api_url: str = "https://gamma-api.polymarket.com"
     chain_id: int = 137  # Polygon mainnet
     ws_reconnect_delay_seconds: int = 5

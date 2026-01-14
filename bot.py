@@ -13,7 +13,7 @@ from .config import Config, load_config_from_env
 from .connector import AuthManager, PolymarketRestClient, PolymarketWebSocketClient
 from .connector.ws_client import BookUpdate, PriceChange, BestBidAsk
 from .orderbook import OrderBookManager
-from .signals import ParityDetector, ParitySignal, ConvergenceDetector
+from .signals import ParityDetector, ParitySignal, ConvergenceDetector, SpotLagDetector, SpotLagSignal, BinanceSpotFeed
 from .exec import PairedExecutor, ExecutionResult, ExecutionStatus
 from .positions import PositionManager, PairedPosition
 from .risk import RiskManager
@@ -84,6 +84,14 @@ class ArbitrageBot:
             convergence_threshold=Decimal(str(self.config.trading.convergence_threshold)),
         )
         
+        # Spot-lag detector
+        self.spot_feed = BinanceSpotFeed()
+        self.spot_lag_detector = SpotLagDetector(
+            spot_feed=self.spot_feed,
+            min_edge=Decimal(str(self.config.trading.min_edge)),
+            min_spot_move=Decimal("0.1"),  # 0.1% minimum spot move
+        )
+        
         self.position_manager = PositionManager(
             max_open_pairs=self.config.trading.max_open_pairs,
         )
@@ -143,6 +151,7 @@ class ArbitrageBot:
             await asyncio.gather(
                 self._ws_loop(),
                 self._trading_loop(),
+                self._spot_lag_loop(),
                 self._exit_monitor_loop(),
                 self._health_check_loop(),
                 self._state_save_loop(),
@@ -196,7 +205,14 @@ class ArbitrageBot:
     
     async def _init_markets(self) -> None:
         """Initialize markets from configuration."""
-        for market_config in self.config.markets:
+        # Symbol detection from condition_id patterns
+        symbol_patterns = {
+            "btc": ["btc", "bitcoin"],
+            "eth": ["eth", "ethereum"],
+            "sol": ["sol", "solana"],
+        }
+        
+        for i, market_config in enumerate(self.config.markets):
             self.orderbook.add_market(
                 condition_id=market_config.condition_id,
                 yes_token_id=market_config.yes_token_id,
@@ -204,6 +220,19 @@ class ArbitrageBot:
                 tick_size=market_config.tick_size,
                 neg_risk=market_config.neg_risk,
             )
+            
+            # Register with spot-lag detector
+            # Determine symbol based on market index (btc=0-2, eth=3-5, sol=6-8 for 3 epochs)
+            symbol_idx = i // 3 if len(self.config.markets) >= 9 else i // (len(self.config.markets) // 3 + 1)
+            symbols = ["btc", "eth", "sol"]
+            if symbol_idx < len(symbols):
+                symbol = symbols[symbol_idx]
+                self.spot_lag_detector.register_market(
+                    symbol=symbol,
+                    condition_id=market_config.condition_id,
+                    up_token_id=market_config.yes_token_id,
+                    down_token_id=market_config.no_token_id,
+                )
             
             self.logger.info(
                 "market_added",
@@ -399,6 +428,140 @@ class ArbitrageBot:
             self.risk_manager.record_trade(False)
             self.logger.error("execution_error", error=str(e))
     
+    async def _spot_lag_loop(self) -> None:
+        """Monitor spot prices and detect lag opportunities."""
+        scan_interval = 1.0  # Check every second
+        
+        self.logger.info("spot_lag_loop_started")
+        
+        while self._running:
+            try:
+                # Fetch latest spot prices
+                for symbol in ["btc", "eth", "sol"]:
+                    spot_data = await self.spot_feed.get_current_price(symbol)
+                    
+                    if spot_data:
+                        # Update PM prices from orderbook
+                        for market in self.orderbook.get_all_markets():
+                            # Match market to symbol (simplified - uses registration)
+                            pass
+                        
+                        # Log significant spot moves
+                        if abs(spot_data.change_pct) > Decimal("0.1"):
+                            self.logger.debug(
+                                "spot_move",
+                                symbol=symbol,
+                                change_pct=f"{spot_data.change_pct:.2f}%",
+                                price=str(spot_data.price),
+                            )
+                
+                # Update PM prices in detector from orderbook
+                for market in self.orderbook.get_all_markets():
+                    yes_bid = market.yes_book.best_bid or Decimal("0")
+                    yes_ask = market.yes_book.best_ask or Decimal("1")
+                    no_bid = market.no_book.best_bid or Decimal("0")
+                    no_ask = market.no_book.best_ask or Decimal("1")
+                    
+                    # Determine symbol from market (check all registered)
+                    for symbol in ["btc", "eth", "sol"]:
+                        market_info = self.spot_lag_detector._market_tokens.get(symbol)
+                        if market_info and market_info["condition_id"] == market.condition_id:
+                            self.spot_lag_detector.update_pm_prices(
+                                symbol=symbol,
+                                up_bid=yes_bid,
+                                up_ask=yes_ask,
+                                down_bid=no_bid,
+                                down_ask=no_ask,
+                            )
+                            break
+                
+                # Scan for opportunities
+                signals = self.spot_lag_detector.scan_all()
+                
+                for signal in signals:
+                    if signal.is_profitable:
+                        self.logger.info(
+                            "spot_lag_signal",
+                            symbol=signal.symbol,
+                            spot_change=f"{signal.spot_change_pct:.2f}%",
+                            direction=signal.direction,
+                            edge=f"{signal.edge:.2f}",
+                            pm_up=str(signal.pm_up_price),
+                            fair_up=str(signal.fair_up_prob),
+                        )
+                        
+                        # Execute if risk allows
+                        await self._execute_spot_lag_signal(signal)
+                
+                await asyncio.sleep(scan_interval)
+                
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error("spot_lag_loop_error", error=str(e))
+                await asyncio.sleep(scan_interval)
+    
+    async def _execute_spot_lag_signal(self, signal: SpotLagSignal) -> None:
+        """Execute a spot-lag signal."""
+        # Check risk
+        risk_check = self.risk_manager.check_can_trade()
+        if not risk_check.passed:
+            return
+        
+        self.logger.info(
+            "executing_spot_lag",
+            symbol=signal.symbol,
+            direction=signal.direction,
+            edge=f"{float(signal.edge)*100:.1f}%",
+            price=str(signal.recommended_price),
+        )
+        
+        try:
+            # Get market info
+            market = self.orderbook.get_market(signal.condition_id)
+            if not market:
+                return
+            
+            # Determine size based on edge and max notional
+            max_notional = Decimal(str(self.config.trading.max_notional_per_trade))
+            size = max_notional / signal.recommended_price
+            size = min(size, signal.max_size)
+            
+            # Place order
+            order = await self.rest_client.post_order(
+                token_id=signal.token_id,
+                side="BUY",
+                price=signal.recommended_price,
+                size=size,
+                order_type="GTC",
+                tick_size=str(market.tick_size),
+                neg_risk=market.neg_risk,
+                funder=self.config.funder_address,
+                signature_type=self.config.signature_type,
+            )
+            
+            self.logger.info(
+                "spot_lag_order_placed",
+                order_id=order.order_id,
+                symbol=signal.symbol,
+                direction=signal.direction,
+                size=str(size),
+                price=str(signal.recommended_price),
+            )
+            
+            self.risk_manager.record_trade(True)
+            self.metrics.record_trade_success(
+                execution_id=order.order_id,
+                condition_id=signal.condition_id,
+                entry_cost=size * signal.recommended_price,
+                expected_pnl=size * signal.edge,
+                execution_time_ms=0,
+            )
+            
+        except Exception as e:
+            self.logger.error("spot_lag_execution_error", error=str(e))
+            self.risk_manager.record_trade(False)
+    
     async def _exit_monitor_loop(self) -> None:
         """Monitor open positions for exit opportunities."""
         check_interval = 1.0  # Check every second
@@ -507,6 +670,7 @@ class ArbitrageBot:
         """Cleanup resources."""
         await self.ws_client.disconnect()
         await self.rest_client.close()
+        await self.spot_feed.stop()
         self.logger.info("cleanup_complete")
     
     def get_status(self) -> dict:
