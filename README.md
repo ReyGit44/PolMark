@@ -194,6 +194,78 @@ tail -f /opt/polymarket-arb-bot/arb_bot.log | jq .
 - Normal during network issues
 - Bot auto-reconnects with backoff
 
+## Running Standalone (Without Ona)
+
+### Quick Start
+
+```bash
+# 1. Clone repo
+git clone https://github.com/ReyGit44/PolMark.git
+cd PolMark
+
+# 2. Setup Python environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: venv\Scripts\activate  # Windows
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Create .env file
+cp .env.example .env
+```
+
+### 5. Edit `.env` with your credentials
+
+Replace these placeholders:
+
+| Placeholder | Your Value |
+|-------------|------------|
+| `PASTE_YOUR_PRIVATE_KEY_HERE` | Your wallet private key (0x...) |
+| `PASTE_YOUR_API_KEY_HERE` | Polymarket CLOB API key |
+| `PASTE_YOUR_API_SECRET_HERE` | Polymarket CLOB API secret |
+| `PASTE_YOUR_API_PASSPHRASE_HERE` | Polymarket CLOB API passphrase |
+
+Keep these as-is:
+- `POLYMARKET_FUNDER_ADDRESS` - Already set
+- `POLYMARKET_SIGNATURE_TYPE=0` - Required for programmatic trading
+- `POLYMARKET_MARKETS` - Already configured for 15-min crypto
+
+### 6. Run the bot
+
+```bash
+python -m polymarket_arb_bot
+```
+
+### Run in background (Linux/Mac)
+
+```bash
+nohup python -m polymarket_arb_bot > bot_output.log 2>&1 &
+
+# Monitor logs
+tail -f bot_output.log
+```
+
+### Updating Market IDs
+
+15-minute markets expire. To get new ones:
+
+```bash
+# Get next 15-min epoch
+epoch=$(( ($(date +%s) / 900 + 1) * 900 ))
+
+# Fetch BTC market
+curl -s "https://gamma-api.polymarket.com/events/slug/btc-updown-15m-${epoch}" | python -c "
+import json,sys
+data = json.load(sys.stdin)
+m = data.get('markets', [{}])[0]
+tokens = json.loads(m.get('clobTokenIds', '[]'))
+print(f\"{m.get('conditionId')}:{tokens[0]}:{tokens[1]}:0.01:false\")
+"
+```
+
+Update `POLYMARKET_MARKETS` in `.env` with the new values.
+
 ## Disclaimer
 
 This software is for educational purposes. Trading involves risk. No guarantee of profit. Use at your own risk.
