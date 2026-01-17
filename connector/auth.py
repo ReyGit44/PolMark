@@ -91,7 +91,7 @@ class AuthManager:
         
         return {
             "POLY_ADDRESS": self.address,
-            "POLY_SIGNATURE": signed.signature.hex(),
+            "POLY_SIGNATURE": "0x" + signed.signature.hex(),
             "POLY_TIMESTAMP": timestamp,
             "POLY_NONCE": str(nonce),
         }
@@ -115,7 +115,7 @@ class AuthManager:
         message = timestamp + method.upper() + path + body
         
         # Sign with HMAC-SHA256
-        secret_bytes = base64.b64decode(self.api_secret)
+        secret_bytes = base64.urlsafe_b64decode(self.api_secret)
         signature = hmac.new(
             secret_bytes,
             message.encode("utf-8"),

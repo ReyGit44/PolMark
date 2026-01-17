@@ -52,7 +52,7 @@ class RiskConfig:
     max_position_value: float = 1000.0  # Max total position value
     health_check_interval_seconds: int = 30
     kill_switch_loss_threshold: float = 200.0  # Immediate halt threshold
-    max_consecutive_failures: int = 3
+    max_consecutive_failures: int = 10
 
 
 @dataclass
