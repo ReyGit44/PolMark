@@ -38,6 +38,7 @@ class TradingConfig:
     """Trading parameters."""
     min_edge: float = 0.005  # Minimum edge to execute (0.5%)
     slippage_buffer: float = 0.002  # Slippage buffer (0.2%)
+    min_spot_move: float = 0.1  # Minimum spot price move to trigger (0.1%)
     max_notional_per_trade: float = 100.0  # Max USDC per trade
     max_open_pairs: int = 5  # Max concurrent paired positions
     cooldown_ms: int = 1000  # Cooldown between trades in ms
